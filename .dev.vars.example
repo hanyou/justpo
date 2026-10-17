@@ -1,0 +1,14 @@
+# Copy to .dev.vars for local dev: `cp .dev.vars.example .dev.vars`
+# NEVER commit .dev.vars — it holds secrets.
+
+# From Shopify Partner Dashboard > Apps > JustPO > App setup
+SHOPIFY_API_KEY=
+SHOPIFY_API_SECRET=
+
+# Local dev URL (wrangler dev / cloudflare tunnel). Production: the workers.dev URL.
+SHOPIFY_APP_URL=http://localhost:8787
+SCOPES=read_products,read_inventory,write_inventory,read_locations
+
+# Resend (https://resend.com) — PO emails. Optional: emails log instead of sending when unset.
+RESEND_API_KEY=
+RESEND_FROM_EMAIL="JustPO <po@justpo.app>"

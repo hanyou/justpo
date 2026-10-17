@@ -1,0 +1,37 @@
+# JustPO — Cloudflare Workers config
+# Secrets are set via `wrangler secret put` (SHOPIFY_API_SECRET, RESEND_API_KEY).
+# Local dev reads .dev.vars (see .dev.vars.example).
+
+name = "justpo"
+main = "./worker.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# NOTE: `npm run build` must run before `wrangler deploy` so build/server/index.js exists.
+# The deploy script in package.json does this: `npm run build && wrangler deploy ./worker.ts`
+
+# Static client assets (build/client) are served by the Worker. Requests that match
+# a file here are answered from the asset bucket; the rest fall through to worker.ts.
+[assets]
+directory = "./build/client"
+binding = "ASSETS"
+
+[vars]
+# Public, non-secret config. Secrets go via `wrangler secret put`.
+SHOPIFY_APP_URL = "https://justpo.you-han.workers.dev"
+SCOPES = "read_products,read_inventory,write_inventory,read_locations"
+RESEND_FROM_EMAIL = "JustPO <po@justpo.app>"
+# Subscription gate OFF during development (Billing API needs public distribution).
+# Set to "true" before launch to enforce an active subscription on /app.
+BILLING_ENFORCED = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "justpo-db"
+# database_id is filled in after `wrangler d1 create justpo-db`
+database_id = "713be499-a0cc-4dc0-a38a-e7fa3ae1fa14"
+
+# Hourly cron for low-stock checks (PRD §6.3): the worker runs every hour and
+# only checks shops whose local time is 08:00.
+[triggers]
+crons = ["0 * * * *"]
