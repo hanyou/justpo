@@ -36,9 +36,11 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   const shop = await ensureShop(db, session.shop);
   const allowed = await canCreatePO(db, shop);
 
-  // Product search for the useFetcher (GET ?q=...).
+  // Product search for the useFetcher (GET ?q=...). Empty query → skip the
+  // Shopify call (a bare "*" is not a valid products query operator).
   const q = new URL(request.url).searchParams.get("q");
-  const search = q !== null ? await searchProducts(admin as any, q || "*") : null;
+  const search =
+    q !== null ? (q.trim() ? await searchProducts(admin as any, q.trim()) : []) : null;
 
   return json({ suppliers: suppliers ?? [], allowed, search });
 }

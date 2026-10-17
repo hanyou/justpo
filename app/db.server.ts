@@ -106,20 +106,20 @@ export async function nextPoNumber(
   db: D1Database,
   shopId: string
 ): Promise<string> {
-  // D1 batch executes in order; the counter row serializes allocation.
+  // Single-statement compare-and-set: SQLite/D1 serializes writes, so two
+  // concurrent POs can never read the same counter and collide on
+  // UNIQUE(shop_id, po_number). `next_number` keeps the invariant "the number
+  // to allocate NEXT"; RETURNING hands back the value we just consumed
+  // (pre-increment), which also stays correct for rows seeded by the old code.
   const row = await db
-    .prepare(`SELECT next_number FROM po_counters WHERE shop_id = ?`)
+    .prepare(
+      `INSERT INTO po_counters (shop_id, next_number) VALUES (?, 2)
+       ON CONFLICT(shop_id) DO UPDATE SET next_number = next_number + 1
+       RETURNING next_number - 1 AS allocated`
+    )
     .bind(shopId)
-    .first<{ next_number: number }>();
-  const next = row?.next_number ?? 1;
-  await db.batch([
-    db
-      .prepare(
-        `INSERT INTO po_counters (shop_id, next_number) VALUES (?, ?)
-         ON CONFLICT(shop_id) DO UPDATE SET next_number = excluded.next_number`
-      )
-      .bind(shopId, next + 1),
-  ]);
+    .first<{ allocated: number }>();
+  const next = row?.allocated ?? 1;
   return `PO-${String(next).padStart(4, "0")}`;
 }
 

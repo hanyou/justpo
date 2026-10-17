@@ -20,7 +20,7 @@ binding = "ASSETS"
 # Public, non-secret config. Secrets go via `wrangler secret put`.
 SHOPIFY_APP_URL = "https://justpo.you-han.workers.dev"
 SCOPES = "read_products,read_inventory,write_inventory,read_locations"
-RESEND_FROM_EMAIL = "JustPO <po@justpo.app>"
+RESEND_FROM_EMAIL = "JustPO <po@getcartmail.com>"
 # Subscription gate OFF during development (Billing API needs public distribution).
 # Set to "true" before launch to enforce an active subscription on /app.
 BILLING_ENFORCED = "false"
