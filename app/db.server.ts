@@ -199,37 +199,77 @@ export async function getPurchaseOrder(
   return { ...po, lines: lines ?? [], supplier };
 }
 
+export interface POListFilters {
+  status?: string;
+  q?: string;
+}
+
+/**
+ * Build the shared WHERE fragment (+ bound params) for list/count so both stay
+ * in sync. Filters are AND-ed on top of the mandatory shop_id scoping done by
+ * the caller. Search matches PO number OR supplier name (LIKE %q%).
+ */
+function buildPOFilters(filters: POListFilters): {
+  clause: string;
+  params: string[];
+} {
+  const parts: string[] = [];
+  const params: string[] = [];
+  if (filters.status) {
+    parts.push("po.status = ?");
+    params.push(filters.status);
+  }
+  const q = filters.q?.trim();
+  if (q) {
+    const like = `%${q}%`;
+    parts.push("(po.po_number LIKE ? OR s.name LIKE ?)");
+    params.push(like, like);
+  }
+  return { clause: parts.length ? ` AND ${parts.join(" AND ")}` : "", params };
+}
+
 export async function listPurchaseOrders(
   db: D1Database,
   shopId: string,
-  status?: string
+  filters: POListFilters & { limit?: number; offset?: number } = {}
 ): Promise<Array<PurchaseOrder & { supplier_name: string | null; line_count: number }>> {
-  const { results } = status
-    ? await db
-        .prepare(
-          `SELECT po.*, s.name AS supplier_name,
-                  (SELECT COUNT(*) FROM po_line_items li WHERE li.po_id = po.id) AS line_count
-           FROM purchase_orders po
-           LEFT JOIN suppliers s ON s.id = po.supplier_id
-           WHERE po.shop_id = ? AND po.status = ?
-           ORDER BY po.created_at DESC`
-        )
-        .bind(shopId, status)
-        .all()
-    : await db
-        .prepare(
-          `SELECT po.*, s.name AS supplier_name,
-                  (SELECT COUNT(*) FROM po_line_items li WHERE li.po_id = po.id) AS line_count
-           FROM purchase_orders po
-           LEFT JOIN suppliers s ON s.id = po.supplier_id
-           WHERE po.shop_id = ?
-           ORDER BY po.created_at DESC`
-        )
-        .bind(shopId)
-        .all();
+  const { clause, params } = buildPOFilters(filters);
+  // limit omitted → return all rows (dashboard "recent" relies on this).
+  let sql =
+    `SELECT po.*, s.name AS supplier_name,
+            (SELECT COUNT(*) FROM po_line_items li WHERE li.po_id = po.id) AS line_count
+     FROM purchase_orders po
+     LEFT JOIN suppliers s ON s.id = po.supplier_id
+     WHERE po.shop_id = ?${clause}
+     ORDER BY po.created_at DESC`;
+  const binds: Array<string | number> = [shopId, ...params];
+  if (typeof filters.limit === "number") {
+    sql += " LIMIT ? OFFSET ?";
+    binds.push(filters.limit, filters.offset ?? 0);
+  }
+  const { results } = await db.prepare(sql).bind(...binds).all();
   return (results ?? []) as unknown as Array<
     PurchaseOrder & { supplier_name: string | null; line_count: number }
   >;
+}
+
+/** Total rows matching the same filters — used for pagination. */
+export async function countPurchaseOrders(
+  db: D1Database,
+  shopId: string,
+  filters: POListFilters = {}
+): Promise<number> {
+  const { clause, params } = buildPOFilters(filters);
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM purchase_orders po
+       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       WHERE po.shop_id = ?${clause}`
+    )
+    .bind(shopId, ...params)
+    .first<{ total: number }>();
+  return row?.total ?? 0;
 }
 
 /** Delete all data for a shop (GDPR: app/uninstalled + shop/redact). */

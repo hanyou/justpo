@@ -29,6 +29,13 @@ const en = {
   "po.status.received": "Received",
   "po.status.cancelled": "Cancelled",
   "po.new": "New purchase order",
+  "po.searchPO": "Search PO number / supplier…",
+  "po.searchSupplier": "Search supplier name / contact / email…",
+  "po.browseProducts": "Browse products",
+  "po.filterProducts": "Filter products…",
+  "po.addSelected": "Add selected",
+  "po.selectedN": "{n} selected",
+  "po.noProducts": "No products found.",
   "po.supplier": "Supplier",
   "po.lines": "Line items",
   "po.addLine": "Add line",
@@ -99,6 +106,9 @@ const en = {
   "common.loading": "Loading…",
   "common.error": "Something went wrong.",
   "common.search": "Search",
+  "common.prevPage": "Previous",
+  "common.nextPage": "Next",
+  "common.pageInfo": "Page {page} / {total} total",
 } as const;
 
 const zh: Record<keyof typeof en, string> = {
@@ -124,6 +134,13 @@ const zh: Record<keyof typeof en, string> = {
   "po.status.received": "已收货",
   "po.status.cancelled": "已取消",
   "po.new": "新建采购单",
+  "po.searchPO": "搜索 PO 编号/供应商…",
+  "po.searchSupplier": "搜索供应商名称/联系人/邮箱…",
+  "po.browseProducts": "浏览商品",
+  "po.filterProducts": "筛选商品…",
+  "po.addSelected": "添加所选",
+  "po.selectedN": "已选 {n} 个",
+  "po.noProducts": "没有找到商品。",
   "po.supplier": "供应商",
   "po.lines": "行项目",
   "po.addLine": "添加行",
@@ -194,6 +211,9 @@ const zh: Record<keyof typeof en, string> = {
   "common.loading": "加载中…",
   "common.error": "出错了。",
   "common.search": "搜索",
+  "common.prevPage": "上一页",
+  "common.nextPage": "下一页",
+  "common.pageInfo": "第 {page} 页 / 共 {total} 条",
 };
 
 export const dictionaries = { en, zh } as const;

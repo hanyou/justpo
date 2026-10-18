@@ -3,13 +3,13 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/cloudfla
 import { json, redirect } from "@remix-run/cloudflare";
 import {
   Page, Card, FormLayout, TextField, Button, Select, Text,
-  InlineStack, BlockStack, Banner,
+  InlineStack, BlockStack, Banner, Modal, ChoiceList,
 } from "@shopify/polaris";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPurchaseOrder, ensureShop, getDb, getEnv } from "../db.server";
 import type { Supplier } from "../db.server";
 import { getShopify } from "../shopify.server";
-import { searchProducts } from "../lib/catalog.server";
+import { searchProducts, listProducts } from "../lib/catalog.server";
 import type { VariantOption } from "../lib/catalog.server";
 import { canCreatePO } from "../lib/billing.server";
 import { interpolate, useT } from "../components/i18n";
@@ -38,11 +38,15 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
 
   // Product search for the useFetcher (GET ?q=...). Empty query → skip the
   // Shopify call (a bare "*" is not a valid products query operator).
-  const q = new URL(request.url).searchParams.get("q");
+  const params = new URL(request.url).searchParams;
+  const q = params.get("q");
   const search =
     q !== null ? (q.trim() ? await searchProducts(admin as any, q.trim()) : []) : null;
 
-  return json({ suppliers: suppliers ?? [], allowed, search });
+  // Browse picker (GET ?browse=1): first 50 products, fetched once per modal open.
+  const products = params.get("browse") === "1" ? await listProducts(admin as any) : null;
+
+  return json({ suppliers: suppliers ?? [], allowed, search, products });
 }
 
 export async function action({ request, context }: ActionFunctionArgs) {
@@ -78,11 +82,15 @@ export default function NewPO() {
   const { suppliers, allowed, search: initialSearch } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const searcher = useFetcher<typeof loader>();
+  const browseFetcher = useFetcher<typeof loader>();
 
   const [supplierId, setSupplierId] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (query.trim().length >= 2) {
@@ -94,6 +102,45 @@ export default function NewPO() {
   }, [query]);
 
   const results: VariantOption[] = searcher.data?.search ?? initialSearch ?? [];
+
+  // Browse modal: products are fetched once via ?browse=1; the filter box is
+  // pure client-side matching over product title / variant title / SKU.
+  const browseProducts: VariantOption[] = browseFetcher.data?.products ?? [];
+  const isBrowsing = browseFetcher.state !== "idle" && browseFetcher.data?.products == null;
+  const filteredProducts = useMemo(() => {
+    const kw = filter.trim().toLowerCase();
+    if (!kw) return browseProducts;
+    return browseProducts.filter((v) =>
+      `${v.productTitle} ${v.title} ${v.sku ?? ""}`.toLowerCase().includes(kw)
+    );
+  }, [browseProducts, filter]);
+
+  const openBrowse = () => {
+    setBrowseOpen(true);
+    if (!browseFetcher.data?.products) {
+      browseFetcher.submit({ browse: "1" }, { method: "get" });
+    }
+  };
+  const closeBrowse = () => setBrowseOpen(false);
+  const addSelected = () => {
+    const chosen = browseProducts.filter((v) => selectedIds.includes(v.id));
+    if (chosen.length) {
+      setLines((ls) => [
+        ...ls,
+        ...chosen.map((v) => ({
+          key: `${v.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          variant_id: v.id,
+          sku: v.sku ?? "",
+          title: v.productTitle + (v.title !== "Default Title" ? ` — ${v.title}` : ""),
+          qty: "1",
+          cost: "",
+        })),
+      ]);
+    }
+    setSelectedIds([]);
+    setFilter("");
+    setBrowseOpen(false);
+  };
 
   const addLine = (v: VariantOption) => {
     setLines((ls) => [
@@ -165,13 +212,18 @@ export default function NewPO() {
               <Text as="h2" variant="headingMd">{t("po.lines")}</Text>
               {error && <Banner tone="critical">{error}</Banner>}
 
-              <TextField
-                label={t("common.search")}
-                value={query}
-                onChange={setQuery}
-                autoComplete="off"
-                placeholder="Search products…"
-              />
+              <InlineStack gap="200" blockAlign="end">
+                <div style={{ flex: 1 }}>
+                  <TextField
+                    label={t("common.search")}
+                    value={query}
+                    onChange={setQuery}
+                    autoComplete="off"
+                    placeholder="Search products…"
+                  />
+                </div>
+                <Button onClick={openBrowse}>{t("po.browseProducts")}</Button>
+              </InlineStack>
               {results.length > 0 && query.trim().length >= 2 && (
                 <Card>
                   <BlockStack gap="200">
@@ -216,6 +268,48 @@ export default function NewPO() {
             </FormLayout>
           </Form>
         </Card>
+        <Modal
+          open={browseOpen}
+          onClose={closeBrowse}
+          title={t("po.browseProducts")}
+          size="large"
+          limitHeight
+          loading={isBrowsing}
+          primaryAction={{
+            content: `${interpolate(t("po.selectedN"), { n: selectedIds.length })} · ${t("po.addSelected")}`,
+            onAction: addSelected,
+            disabled: selectedIds.length === 0,
+          }}
+          secondaryActions={[{ content: t("common.cancel"), onAction: closeBrowse }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="300">
+              <TextField
+                label=""
+                labelHidden
+                value={filter}
+                onChange={setFilter}
+                autoComplete="off"
+                placeholder={t("po.filterProducts")}
+              />
+              {filteredProducts.length === 0 && !isBrowsing ? (
+                <Text as="span" tone="subdued">{t("po.noProducts")}</Text>
+              ) : (
+                <ChoiceList
+                  title={t("po.browseProducts")}
+                  titleHidden
+                  allowMultiple
+                  choices={filteredProducts.map((v) => ({
+                    label: `${v.productTitle} — ${v.title} · ${v.sku ?? ""}`,
+                    value: v.id,
+                  }))}
+                  selected={selectedIds}
+                  onChange={(sel) => setSelectedIds(sel)}
+                />
+              )}
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
       </BlockStack>
     </Page>
   );

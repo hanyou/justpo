@@ -49,3 +49,41 @@ export async function searchProducts(
   }
   return out.filter((v) => v.id);
 }
+
+/**
+ * Browse the first 50 products (for the picker modal, no query). Each variant
+ * becomes one selectable option; inventoryQuantity isn't requested → null.
+ */
+export async function listProducts(admin: GraphqlClient): Promise<VariantOption[]> {
+  const response = await admin.graphql(
+    `query {
+      products(first: 50) {
+        edges {
+          node {
+            title
+            variants(first: 20) {
+              edges {
+                node { id sku title }
+              }
+            }
+          }
+        }
+      }
+    }`
+  );
+  const data = await response.json();
+  const out: VariantOption[] = [];
+  for (const edge of data?.data?.products?.edges ?? []) {
+    const productTitle = edge?.node?.title ?? "";
+    for (const v of edge?.node?.variants?.edges ?? []) {
+      out.push({
+        id: v?.node?.id ?? "",
+        sku: v?.node?.sku ?? null,
+        title: v?.node?.title ?? "",
+        inventoryQuantity: null,
+        productTitle,
+      });
+    }
+  }
+  return out.filter((v) => v.id);
+}
