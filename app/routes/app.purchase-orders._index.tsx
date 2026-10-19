@@ -26,14 +26,19 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   const status = statusParam && statusParam !== "all" ? statusParam : undefined;
   const q = (url.searchParams.get("q") ?? "").trim();
   const parsedPage = parseInt(url.searchParams.get("page") ?? "1", 10);
-  const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
-  const offset = (page - 1) * PER_PAGE;
+  const requestedPage = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 
   const filters = { status, q: q || undefined };
-  const [pos, total] = await Promise.all([
-    listPurchaseOrders(db, session.shop, { ...filters, limit: PER_PAGE, offset }),
-    countPurchaseOrders(db, session.shop, filters),
-  ]);
+  // Count first so we can clamp the page (a delete that empties the last page
+  // should land on the new last page, not an empty one).
+  const total = await countPurchaseOrders(db, session.shop, filters);
+  const lastPage = Math.max(1, Math.ceil(total / PER_PAGE));
+  const page = Math.min(requestedPage, lastPage);
+  const pos = await listPurchaseOrders(db, session.shop, {
+    ...filters,
+    limit: PER_PAGE,
+    offset: (page - 1) * PER_PAGE,
+  });
   return json({ pos, total, status: statusParam ?? "all", q, page });
 }
 
@@ -97,7 +102,7 @@ export default function PurchaseOrders() {
                 />
               </div>
               <Button submit variant="primary">{t("common.search")}</Button>
-              {q ? <Button variant="plain" onClick={clearSearch}>{t("common.cancel")}</Button> : null}
+              {q ? <Button variant="plain" onClick={clearSearch}>{t("common.clear")}</Button> : null}
             </InlineStack>
           </Form>
         </Box>

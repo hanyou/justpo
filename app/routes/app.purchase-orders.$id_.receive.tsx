@@ -53,7 +53,7 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
         `INSERT INTO po_line_items (id, po_id, sku, qty, qty_received, qty_written_back, writeback_status)
          VALUES (?, ?, ?, ?, ?, 0, 'pending')`
       )
-      .bind(id, poId, sku, qty, qty, ts)
+      .bind(id, poId, sku, qty, qty)
       .run();
     return json({ ok: true, addedLineId: id, writebackFailed: 0 });
   }
@@ -76,7 +76,9 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
         lineId: l.id,
         inventoryItemId: l.variant_id ? (itemIds.get(l.variant_id) ?? "") : "",
         delta: l.qty_received - l.qty_written_back,
-        idempotentKey: `${poId}:${l.id}:r${l.qty_received}`,
+        // Same key formula as the receive path: a unique from->to transition,
+        // so a replayed retry matches and different gaps never collide.
+        idempotentKey: `${poId}:${l.id}:${l.qty_written_back}->${l.qty_received}`,
       }))
     );
     return json({ ok: true, writebackFailed: 0 });
@@ -89,37 +91,45 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
     }
     const received = JSON.parse(String(form.get("received") ?? "{}")) as Record<string, number>;
 
-    // Compute deltas vs current values for writeback.
-    const deltas: Array<{ lineId: string; variantId: string | null; delta: number; receivedTarget: number }> = [];
+    // Write back the not-yet-applied portion of each line. The delta base is
+    // qty_written_back (NOT the previous qty_received), so a receipt that
+    // failed to write back earlier is picked up here instead of being skipped;
+    // and the idempotent key encodes the exact from->to transition, so the
+    // receive and retry paths use an identical key + delta base. Together these
+    // keep the qty_written_back ledger from drifting against real inventory.
+    const deltas: Array<{ lineId: string; variantId: string; from: number; to: number; delta: number }> = [];
     const stmts = [];
     for (const line of po.lines) {
       const next = Math.max(0, Math.floor(received[line.id] ?? line.qty_received));
-      const delta = next - line.qty_received;
-      if (delta !== 0) {
+      if (next !== line.qty_received) {
         stmts.push(
           db.prepare(`UPDATE po_line_items SET qty_received = ? WHERE id = ?`).bind(next, line.id)
         );
-        if (delta > 0 && line.variant_id) {
-          deltas.push({ lineId: line.id, variantId: line.variant_id, delta, receivedTarget: next });
-        }
+      }
+      const delta = next - line.qty_written_back;
+      if (delta > 0 && line.variant_id) {
+        deltas.push({ lineId: line.id, variantId: line.variant_id, from: line.qty_written_back, to: next, delta });
       }
     }
-    if (stmts.length) await db.batch(stmts);
+    // D1 caps a batch at 100 statements — chunk so a large PO never crashes.
+    for (let i = 0; i < stmts.length; i += 100) {
+      await db.batch(stmts.slice(i, i + 100));
+    }
 
     // Inventory writeback — failures recorded per line, never block the PO.
     if (deltas.length > 0) {
       const itemIds = await getInventoryItemIds(
         admin as any,
-        deltas.map((d) => d.variantId as string)
+        deltas.map((d) => d.variantId)
       );
       await writebackReceipt(
         admin as any,
         db,
         deltas.map((d) => ({
           lineId: d.lineId,
-          inventoryItemId: itemIds.get(d.variantId as string) ?? "",
+          inventoryItemId: itemIds.get(d.variantId) ?? "",
           delta: d.delta,
-          idempotentKey: `${poId}:${d.lineId}:r${d.receivedTarget}`,
+          idempotentKey: `${poId}:${d.lineId}:${d.from}->${d.to}`,
         }))
       );
     }

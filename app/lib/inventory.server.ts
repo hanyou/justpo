@@ -9,8 +9,10 @@
  * P0 limitation: one write per item, at the first location that stocks it.
  * Failures are recorded per line as writeback_status (pending|success|failed)
  * and surfaced in the UI with a manual retry button — the PO itself is never
- * blocked by a writeback failure. Retries reuse the same idempotent key (derived
- * from poId:lineId:receivedTarget) so a replayed batch never double-counts.
+ * blocked by a writeback failure. Both the receive and retry paths derive the
+ * idempotent key from the exact from->to transition (poId:lineId:
+ * qty_written_back->qty_received) with delta measured from qty_written_back, so
+ * a replayed batch never double-counts and no pending portion is ever skipped.
  */
 import type { GraphqlClient } from "./low-stock.server";
 
@@ -18,7 +20,7 @@ export interface WritebackItem {
   lineId: string;
   inventoryItemId: string;
   delta: number; // positive = stock in
-  idempotentKey: string; // monotonic per line, decoupled from the delta amount
+  idempotentKey: string; // unique per from->to transition, so replays match and different gaps never collide
 }
 
 export interface LevelInfo {

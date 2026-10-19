@@ -139,7 +139,11 @@ export async function action({ request, context }: ActionFunctionArgs) {
           )
       );
     }
-    await db.batch(stmts);
+    // D1 batch limit is 100 — a supplier group with 100+ SKUs is common. stmts[0]
+    // is the PO head, so the first chunk satisfies the line_items FK.
+    for (let i = 0; i < stmts.length; i += 100) {
+      await db.batch(stmts.slice(i, i + 100));
+    }
     poCount++;
   }
   return json({ ok: true, suppliers: 0, pos: poCount });

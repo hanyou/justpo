@@ -116,6 +116,9 @@ export default function NewPO() {
   }, [browseProducts, filter]);
 
   const openBrowse = () => {
+    // Always start fresh: drop any selection/filter from a previous open.
+    setSelectedIds([]);
+    setFilter("");
     setBrowseOpen(true);
     if (!browseFetcher.data?.products) {
       browseFetcher.submit({ browse: "1" }, { method: "get" });
@@ -300,7 +303,13 @@ export default function NewPO() {
                   titleHidden
                   allowMultiple
                   choices={filteredProducts.map((v) => ({
-                    label: `${v.productTitle} — ${v.title} · ${v.sku ?? ""}`,
+                    label: [
+                      v.productTitle +
+                        (v.title && v.title !== "Default Title" ? ` — ${v.title}` : ""),
+                      v.sku,
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
                     value: v.id,
                   }))}
                   selected={selectedIds}

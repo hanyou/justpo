@@ -50,13 +50,18 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
         return json({ error: "quota_exceeded" }, { status: 402 });
       }
     }
+    // Only a transition INTO a quota-counting status starts the clock and
+    // consumes quota. Cancelling a never-sent draft must NOT set sent_at /
+    // quota_counted (PRD §4.1: drafts don't count), while sent→cancelled keeps
+    // the existing flag so a cancelled PO never refunds quota.
+    const toCounting = countsTowardQuota(to);
+    const setClause = toCounting
+      ? "status = ?, sent_at = COALESCE(sent_at, ?), quota_counted = 1, updated_at = ?"
+      : "status = ?, updated_at = ?";
+    const binds: string[] = toCounting ? [to, ts, ts, poId] : [to, ts, poId];
     await db
-      .prepare(
-        `UPDATE purchase_orders
-         SET status = ?, sent_at = COALESCE(sent_at, ?), quota_counted = 1, updated_at = ?
-         WHERE id = ?`
-      )
-      .bind(to, ts, ts, poId)
+      .prepare(`UPDATE purchase_orders SET ${setClause} WHERE id = ?`)
+      .bind(...binds)
       .run();
     return json({ ok: true });
   };
@@ -68,6 +73,12 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
   if (intent === "send-email") {
     if (!po.supplier?.email) {
       return json({ error: "supplier_no_email" }, { status: 400 });
+    }
+    // Move to Sent (quota-guarded) BEFORE emailing the supplier, so an
+    // over-quota shop never gets the PO sent out (was: email first, then 402).
+    if (po.status === (POStatus.Draft as string)) {
+      const res = await transition(POStatus.Sent);
+      if (res instanceof Response && res.status !== 200) return res;
     }
     const pdf = await renderPOPdf({
       poNumber: po.po_number,
@@ -89,11 +100,8 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
       pdfFilename: `${po.po_number}.pdf`,
     });
     // PRD §6.5: email failure does NOT roll back the sent status — the PO
-    // stays sent, the user sees a red warning + retry button.
-    if (po.status === (POStatus.Draft as string)) {
-      const res = await transition(POStatus.Sent);
-      if (res instanceof Response && res.status !== 200) return res;
-    }
+    // stays sent (transition above already committed it), the user sees a red
+    // warning + retry button.
     return json({ emailSent: email.sent, emailReason: email.reason });
   }
 

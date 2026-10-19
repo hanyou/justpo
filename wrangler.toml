@@ -24,6 +24,12 @@ RESEND_FROM_EMAIL = "JustPO <po@getcartmail.com>"
 # Subscription gate OFF during development (Billing API needs public distribution).
 # Set to "true" before launch to enforce an active subscription on /app.
 BILLING_ENFORCED = "false"
+# Billing test-mode toggle. Launch is a PAIR: real paid billing requires BOTH
+# BILLING_ENFORCED="true" AND BILLING_TEST_MODE="false". If you flip only
+# BILLING_ENFORCED and leave this "true", every charge is a TEST payment and
+# you collect no revenue. Declared here (not left implicit) so the pair can't
+# be overlooked. Kept "true" for dev so no accidental real charge happens.
+BILLING_TEST_MODE = "true"
 
 [[d1_databases]]
 binding = "DB"

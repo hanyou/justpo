@@ -34,7 +34,20 @@ export interface BillingState {
 }
 
 export function cycleStartFor(shop: ShopRow): string {
-  return shop.billing_period_start ?? shop.installed_at;
+  const anchorStr = shop.billing_period_start ?? shop.installed_at;
+  const anchor = new Date(anchorStr).getTime();
+  const nowTs = Date.now();
+  // No usable anchor, or we're still inside the very first cycle.
+  if (!Number.isFinite(anchor) || anchor > nowTs) return anchorStr;
+  // Roll the fixed anchor forward in whole 30-day steps to the most recent
+  // boundary <= now, so the Starter quota window SLIDES each month instead of
+  // counting forever from install/first-sync (a shop would otherwise be stuck
+  // at 30 POs until they revisited the billing page). When Shopify has synced a
+  // real billing_period_start within the last 30 days this stays a no-op and
+  // matches the actual invoice cycle.
+  const PERIOD_MS = 30 * 24 * 3600 * 1000;
+  const periods = Math.floor((nowTs - anchor) / PERIOD_MS);
+  return new Date(anchor + periods * PERIOD_MS).toISOString();
 }
 
 export async function isSeedUser(db: D1Database, shop: string): Promise<boolean> {

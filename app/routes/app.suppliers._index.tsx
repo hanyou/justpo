@@ -16,7 +16,7 @@ import {
   TextField,
   Box,
 } from "@shopify/polaris";
-import { getDb, getEnv } from "../db.server";
+import { getDb, getEnv, escapeLike } from "../db.server";
 import type { Supplier } from "../db.server";
 import { getShopify } from "../shopify.server";
 import { useT } from "../components/i18n";
@@ -32,33 +32,37 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") ?? "").trim();
   const parsedPage = parseInt(url.searchParams.get("page") ?? "1", 10);
-  const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
-  const offset = (page - 1) * PER_PAGE;
+  const requestedPage = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 
   // shop_id isolation is mandatory; the name/contact/email LIKE filter is added
   // only when a search term is present. Same WHERE reused for count + list.
   let where = "WHERE shop_id = ?";
   const binds: string[] = [session.shop];
   if (q) {
-    where += " AND (name LIKE ? OR contact LIKE ? OR email LIKE ?)";
-    const like = `%${q}%`;
+    where +=
+      " AND (name LIKE ? ESCAPE '\\' OR contact LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\')";
+    const like = `%${escapeLike(q)}%`;
     binds.push(like, like, like);
   }
 
-  const [{ results }, countRow] = await Promise.all([
-    db
-      .prepare(`SELECT * FROM suppliers ${where} ORDER BY name LIMIT ? OFFSET ?`)
-      .bind(...binds, PER_PAGE, offset)
-      .all<Supplier>(),
-    db
-      .prepare(`SELECT COUNT(*) AS total FROM suppliers ${where}`)
-      .bind(...binds)
-      .first<{ total: number }>(),
-  ]);
+  // Count first so a delete that empties the last page clamps to the new last page.
+  const countRow = await db
+    .prepare(`SELECT COUNT(*) AS total FROM suppliers ${where}`)
+    .bind(...binds)
+    .first<{ total: number }>();
+  const total = countRow?.total ?? 0;
+  const lastPage = Math.max(1, Math.ceil(total / PER_PAGE));
+  const page = Math.min(requestedPage, lastPage);
+  const offset = (page - 1) * PER_PAGE;
+
+  const { results } = await db
+    .prepare(`SELECT * FROM suppliers ${where} ORDER BY name LIMIT ? OFFSET ?`)
+    .bind(...binds, PER_PAGE, offset)
+    .all<Supplier>();
 
   return json({
     suppliers: results ?? [],
-    total: countRow?.total ?? 0,
+    total,
     q,
     page,
   });
@@ -141,7 +145,7 @@ export default function Suppliers() {
               <Button submit variant="primary">{t("common.search")}</Button>
               {q ? (
                 <Button variant="plain" onClick={() => navigate("/app/suppliers")}>
-                  {t("common.cancel")}
+                  {t("common.clear")}
                 </Button>
               ) : null}
             </InlineStack>

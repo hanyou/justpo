@@ -84,14 +84,13 @@ export async function ensureShop(
   db: D1Database,
   shopDomain: string
 ): Promise<ShopRow> {
-  const existing = await db
-    .prepare(`SELECT * FROM shops WHERE id = ?`)
-    .bind(shopDomain)
-    .first<ShopRow>();
-  if (existing) return existing;
+  // Idempotent upsert: app.tsx and a child route can call ensureShop in
+  // parallel on first install, and a plain SELECT-then-INSERT would race and
+  // throw on the primary key. ON CONFLICT DO NOTHING makes it safe.
   await db
     .prepare(
-      `INSERT INTO shops (id, plan, installed_at, locale) VALUES (?, 'starter', ?, 'en')`
+      `INSERT INTO shops (id, plan, installed_at, locale) VALUES (?, 'starter', ?, 'en')
+       ON CONFLICT(id) DO NOTHING`
     )
     .bind(shopDomain, now())
     .run();
@@ -169,7 +168,12 @@ export async function createPurchaseOrder(
         )
     );
   }
-  await db.batch(statements);
+  // D1 caps a batch at 100 statements — chunk so a PO with 100+ line items
+  // doesn't throw (the head is statement[0], so FK is satisfied by the first
+  // chunk).
+  for (let i = 0; i < statements.length; i += 100) {
+    await db.batch(statements.slice(i, i + 100));
+  }
   return (await db
     .prepare(`SELECT * FROM purchase_orders WHERE id = ?`)
     .bind(id)
@@ -205,6 +209,14 @@ export interface POListFilters {
 }
 
 /**
+ * Escape LIKE wildcards so a user-typed % or _ matches literally instead of
+ * acting as a wildcard. Pair with `... LIKE ? ESCAPE '\'` in the SQL.
+ */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
  * Build the shared WHERE fragment (+ bound params) for list/count so both stay
  * in sync. Filters are AND-ed on top of the mandatory shop_id scoping done by
  * the caller. Search matches PO number OR supplier name (LIKE %q%).
@@ -221,8 +233,8 @@ function buildPOFilters(filters: POListFilters): {
   }
   const q = filters.q?.trim();
   if (q) {
-    const like = `%${q}%`;
-    parts.push("(po.po_number LIKE ? OR s.name LIKE ?)");
+    const like = `%${escapeLike(q)}%`;
+    parts.push("(po.po_number LIKE ? ESCAPE '\\' OR s.name LIKE ? ESCAPE '\\')");
     params.push(like, like);
   }
   return { clause: parts.length ? ` AND ${parts.join(" AND ")}` : "", params };
