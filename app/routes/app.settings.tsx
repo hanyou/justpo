@@ -1,14 +1,14 @@
-import { Form, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useFetcher, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/cloudflare";
 import { json, redirect } from "@remix-run/cloudflare";
 import {
   Page, Card, Text, Button, BlockStack, InlineStack, Banner,
-  TextField, ResourceList, ResourceItem, RadioButton,
+  TextField, ResourceList, ResourceItem, RadioButton, Modal, ChoiceList,
 } from "@shopify/polaris";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getDb, getEnv } from "../db.server";
 import { getShopify } from "../shopify.server";
-import { searchProducts } from "../lib/catalog.server";
+import { searchProducts, listProducts } from "../lib/catalog.server";
 import type { VariantOption } from "../lib/catalog.server";
 import { loadThresholds } from "../lib/low-stock.server";
 import type { Threshold } from "../lib/low-stock.server";
@@ -27,10 +27,17 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
     .bind(session.shop)
     .first<{ locale: string }>();
 
-  const q = new URL(request.url).searchParams.get("q");
-  const search = q !== null ? await searchProducts(admin as any, q || "*") : null;
+  const params = new URL(request.url).searchParams;
+  const q = params.get("q");
+  // Product search for the debounced box (GET ?q=...). A bare "*" is not a
+  // valid products query operator → empty/blank query returns no results.
+  const search =
+    q !== null ? (q.trim() ? await searchProducts(admin as any, q.trim()) : []) : null;
 
-  return json({ thresholds, locale: (shop?.locale ?? "en") as Locale, search });
+  // Browse picker (GET ?browse=1): first 50 products, fetched once per modal open.
+  const products = params.get("browse") === "1" ? await listProducts(admin as any) : null;
+
+  return json({ thresholds, locale: (shop?.locale ?? "en") as Locale, search, products });
 }
 
 export async function action({ request, context }: ActionFunctionArgs) {
@@ -60,6 +67,31 @@ export async function action({ request, context }: ActionFunctionArgs) {
       .bind(uid(), session.shop, variantId, sku, threshold)
       .run();
     return json({ ok: true });
+  }
+
+  if (intent === "add-thresholds") {
+    // Batch add from the browse modal: threshold defaults to 5 (matching the
+    // per-row default); sku is carried along so the list rows render readably.
+    const variantIds = JSON.parse(String(form.get("variant_ids") ?? "[]")) as string[];
+    const skus = JSON.parse(String(form.get("skus") ?? "{}")) as Record<string, string | null>;
+    if (!Array.isArray(variantIds) || variantIds.length === 0) {
+      return json({ error: "no variants" }, { status: 400 });
+    }
+    const DEFAULT_THRESHOLD = 5;
+    const stmts = variantIds.map((variantId) =>
+      db
+        .prepare(
+          `INSERT INTO low_stock_thresholds (id, shop_id, variant_id, sku, threshold)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(shop_id, variant_id) DO UPDATE SET threshold = excluded.threshold, sku = excluded.sku`
+        )
+        .bind(uid(), session.shop, variantId, skus[variantId] ?? null, DEFAULT_THRESHOLD)
+    );
+    // D1 batch limit is 100 — chunk.
+    for (let i = 0; i < stmts.length; i += 100) {
+      await db.batch(stmts.slice(i, i + 100));
+    }
+    return json({ ok: true, added: stmts.length });
   }
 
   if (intent === "delete-threshold") {
@@ -104,6 +136,53 @@ export default function Settings() {
   const results: VariantOption[] = searcher.data?.search ?? [];
   const existing = new Set(thresholds.map((th) => th.variant_id));
 
+  // Browse-products modal (reuses the new-PO picker pattern).
+  const browseFetcher = useFetcher<typeof loader>();
+  const submit = useSubmit();
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const browseProducts: VariantOption[] = browseFetcher.data?.products ?? [];
+  const isBrowsing = browseFetcher.state !== "idle" && browseFetcher.data?.products == null;
+  const filteredProducts = useMemo(() => {
+    const kw = filter.trim().toLowerCase();
+    if (!kw) return browseProducts;
+    return browseProducts.filter((v) =>
+      `${v.productTitle} ${v.title} ${v.sku ?? ""}`.toLowerCase().includes(kw)
+    );
+  }, [browseProducts, filter]);
+
+  const openBrowse = () => {
+    // Always start fresh: drop any selection/filter from a previous open.
+    setSelectedIds([]);
+    setFilter("");
+    setBrowseOpen(true);
+    if (!browseFetcher.data?.products) {
+      browseFetcher.submit({ browse: "1" }, { method: "get" });
+    }
+  };
+  const closeBrowse = () => setBrowseOpen(false);
+  const addSelected = () => {
+    // Skip variants already tracked (they're disabled in the list too).
+    const chosen = browseProducts.filter(
+      (v) => selectedIds.includes(v.id) && !existing.has(v.id)
+    );
+    if (chosen.length) {
+      const payload = new FormData();
+      payload.set("intent", "add-thresholds");
+      payload.set("variant_ids", JSON.stringify(chosen.map((v) => v.id)));
+      payload.set(
+        "skus",
+        JSON.stringify(Object.fromEntries(chosen.map((v) => [v.id, v.sku ?? null])))
+      );
+      submit(payload, { method: "post" });
+    }
+    setSelectedIds([]);
+    setFilter("");
+    setBrowseOpen(false);
+  };
+
   return (
     <Page title={t("settings.title")}>
       <BlockStack gap="400">
@@ -124,13 +203,18 @@ export default function Settings() {
         <Card>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">{t("settings.lowStock")}</Text>
-            <TextField
-              label={t("common.search")}
-              value={query}
-              onChange={setQuery}
-              autoComplete="off"
-              placeholder="Search products…"
-            />
+            <InlineStack gap="200" blockAlign="end">
+              <div style={{ flex: 1 }}>
+                <TextField
+                  label={t("common.search")}
+                  value={query}
+                  onChange={setQuery}
+                  autoComplete="off"
+                  placeholder="Search products…"
+                />
+              </div>
+              <Button onClick={openBrowse}>{t("po.browseProducts")}</Button>
+            </InlineStack>
             {results.length > 0 && query.trim().length >= 2 && (
               <BlockStack gap="200">
                 {results.slice(0, 6).map((v) => (
@@ -189,6 +273,61 @@ export default function Settings() {
             />
           </BlockStack>
         </Card>
+
+        <Modal
+          open={browseOpen}
+          onClose={closeBrowse}
+          title={t("po.browseProducts")}
+          size="large"
+          limitHeight
+          loading={isBrowsing}
+          primaryAction={{
+            content: `${interpolate(t("po.selectedN"), { n: selectedIds.length })} · ${t("po.addSelected")}`,
+            onAction: addSelected,
+            disabled: selectedIds.length === 0 || busy,
+            loading: busy,
+          }}
+          secondaryActions={[{ content: t("common.cancel"), onAction: closeBrowse }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="300">
+              <TextField
+                label=""
+                labelHidden
+                value={filter}
+                onChange={setFilter}
+                autoComplete="off"
+                placeholder={t("po.filterProducts")}
+              />
+              {filteredProducts.length === 0 && !isBrowsing ? (
+                <Text as="span" tone="subdued">{t("po.noProducts")}</Text>
+              ) : (
+                <ChoiceList
+                  title={t("po.browseProducts")}
+                  titleHidden
+                  allowMultiple
+                  choices={filteredProducts.map((v) => {
+                    const isExisting = existing.has(v.id);
+                    return {
+                      label:
+                        [
+                          v.productTitle +
+                            (v.title && v.title !== "Default Title" ? ` — ${v.title}` : ""),
+                          v.sku,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") + (isExisting ? " ✓" : ""),
+                      value: v.id,
+                      disabled: isExisting,
+                    };
+                  })}
+                  selected={selectedIds}
+                  onChange={(sel) => setSelectedIds(sel)}
+                />
+              )}
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
       </BlockStack>
     </Page>
   );
