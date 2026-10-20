@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Modal, TextField, Button, BlockStack, Text, Banner } from "@shopify/polaris";
 import { useT } from "./i18n";
 
+// Window in which the same barcode is treated as one scan (not a re-count).
+const SCAN_COOLDOWN_MS = 1800;
+
 /**
  * Barcode scanner integration point.
  *
@@ -23,6 +26,10 @@ export function ScannerModal({
   const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<any>(null);
+  // ZXing's camera callback fires on ~every frame (~2x/sec) while the same
+  // barcode sits in view; without this the parent's onScan would +1 repeatedly.
+  // Dedupe by (code -> last accepted timestamp) so one physical scan = one +1.
+  const lastScanRef = useRef<{ code: string; ts: number }>({ code: "", ts: 0 });
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [manual, setManual] = useState("");
@@ -49,9 +56,15 @@ export function ScannerModal({
         undefined,
         videoRef.current!,
         (result: any, err: any) => {
-          if (result) {
-            onScan(result.getText());
-          }
+          if (!result) return;
+          const code = result.getText();
+          const nowTs = Date.now();
+          const last = lastScanRef.current;
+          // Same barcode within the cooldown = a repeat frame of one scan → ignore.
+          // A different code, or the same code after the cooldown, is a fresh scan.
+          if (code === last.code && nowTs - last.ts < SCAN_COOLDOWN_MS) return;
+          lastScanRef.current = { code, ts: nowTs };
+          onScan(code);
         }
       );
     } catch (e) {

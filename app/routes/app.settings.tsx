@@ -56,7 +56,10 @@ export async function action({ request, context }: ActionFunctionArgs) {
   if (intent === "add-threshold") {
     const variantId = String(form.get("variant_id") ?? "");
     const sku = String(form.get("sku") ?? "") || null;
-    const threshold = Math.max(0, Math.floor(Number(form.get("threshold") ?? 0)));
+    // Empty/blank/garbage falls back to 0; otherwise integer >= 0 (matches the
+    // batch path's Number.isFinite guard so NaN never reaches the NOT NULL column).
+    const parsedThreshold = Number(form.get("threshold"));
+    const threshold = Number.isFinite(parsedThreshold) ? Math.max(0, Math.floor(parsedThreshold)) : 0;
     if (!variantId) return json({ error: "variant required" }, { status: 400 });
     await db
       .prepare(
@@ -127,7 +130,13 @@ export default function Settings() {
   const { thresholds, locale } = useLoaderData<typeof loader>();
   const searcher = useFetcher<typeof loader>();
   const nav = useNavigation();
-  const busy = nav.state === "submitting";
+  // Each <Form method="post"> shares one navigation, so a plain `busy` flag would
+  // light up every Save button. Scope the spinner to the intent (and variant row)
+  // that is actually submitting, via nav.formData.
+  const isSubmitting = (intent: string, variantId?: string) =>
+    nav.state === "submitting" &&
+    nav.formData?.get("intent") === intent &&
+    (variantId === undefined || nav.formData?.get("variant_id") === variantId);
 
   const [query, setQuery] = useState("");
   const [thresholdInput, setThresholdInput] = useState<Record<string, string>>({});
@@ -204,7 +213,7 @@ export default function Settings() {
               <InlineStack gap="400">
                 <RadioButton label="English" id="lang-en" name="locale" value="en" checked={lang === "en"} onChange={() => setLang("en")} />
                 <RadioButton label="简体中文" id="lang-zh" name="locale" value="zh" checked={lang === "zh"} onChange={() => setLang("zh")} />
-                <Button submit size="slim" loading={busy}>{t("common.save")}</Button>
+                <Button submit size="slim" loading={isSubmitting("language")}>{t("common.save")}</Button>
               </InlineStack>
             </Form>
           </BlockStack>
@@ -251,7 +260,7 @@ export default function Settings() {
                               autoComplete="off"
                             />
                           </div>
-                          <Button submit size="slim">{t("common.save")}</Button>
+                          <Button submit size="slim" loading={isSubmitting("add-threshold", v.id)}>{t("common.save")}</Button>
                         </InlineStack>
                       </Form>
                     )}
@@ -284,13 +293,13 @@ export default function Settings() {
                               autoComplete="off"
                             />
                           </div>
-                          <Button submit size="slim">{t("common.save")}</Button>
+                          <Button submit size="slim" loading={isSubmitting("add-threshold", th.variant_id)}>{t("common.save")}</Button>
                         </InlineStack>
                       </Form>
                       <Form method="post">
                         <input type="hidden" name="intent" value="delete-threshold" />
                         <input type="hidden" name="variant_id" value={th.variant_id} />
-                        <Button submit size="slim" tone="critical" variant="plain">✕</Button>
+                        <Button submit size="slim" tone="critical" variant="plain" loading={isSubmitting("delete-threshold", th.variant_id)}>✕</Button>
                       </Form>
                     </InlineStack>
                   </InlineStack>
@@ -310,8 +319,8 @@ export default function Settings() {
           primaryAction={{
             content: `${interpolate(t("po.selectedN"), { n: selectedIds.length })} · ${t("po.addSelected")}`,
             onAction: addSelected,
-            disabled: selectedIds.length === 0 || busy,
-            loading: busy,
+            disabled: selectedIds.length === 0 || isSubmitting("add-thresholds"),
+            loading: isSubmitting("add-thresholds"),
           }}
           secondaryActions={[{ content: t("common.cancel"), onAction: closeBrowse }]}
         >

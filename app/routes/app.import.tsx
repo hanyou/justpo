@@ -152,6 +152,8 @@ export async function action({ request, context }: ActionFunctionArgs) {
         .bind(poId, session.shop, poNumber, supplierId, ts, ts),
     ];
     for (const row of groupRows) {
+      // CSV cost is free text ("3.20 USD" etc.); only bind a real number, else null.
+      const costNum = Number(cell(row, "cost"));
       stmts.push(
         db
           .prepare(
@@ -162,7 +164,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
           .bind(
             uid(), poId, cell(row, "sku"),
             Math.max(1, Math.floor(Number(cell(row, "qty")) || 1)),
-            cell(row, "cost") ? Number(cell(row, "cost")) : null
+            cell(row, "cost") && Number.isFinite(costNum) ? costNum : null
           )
       );
     }

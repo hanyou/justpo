@@ -9,7 +9,7 @@ import { useState } from "react";
 import { ensureShop, getDb, getEnv, getPurchaseOrder } from "../db.server";
 import { getShopify } from "../shopify.server";
 import { renderPOPdf } from "../lib/pdf.server";
-import { sendPOEmail } from "../lib/email.server";
+import { sendPOEmail, escapeHtml } from "../lib/email.server";
 import { canCreatePO } from "../lib/billing.server";
 import { POStatus, canTransition, countsTowardQuota } from "../lib/po-state";
 import { interpolate, useT } from "../components/i18n";
@@ -95,7 +95,7 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
     const email = await sendPOEmail(env, {
       to: po.supplier.email,
       subject: `Purchase order ${po.po_number} from ${session.shop}`,
-      htmlBody: `<p>Hello ${po.supplier.name},</p><p>Please find purchase order <b>${po.po_number}</b> attached.</p>`,
+      htmlBody: `<p>Hello ${escapeHtml(po.supplier.name)},</p><p>Please find purchase order <b>${escapeHtml(po.po_number)}</b> attached.</p>`,
       pdfBytes: pdf,
       pdfFilename: `${po.po_number}.pdf`,
     });
@@ -116,7 +116,10 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
         .prepare(`UPDATE po_line_items SET qty_received = ? WHERE id = ? AND po_id = ?`)
         .bind(Math.max(0, Math.floor(qtyReceived)), lineId, poId)
     );
-    if (stmts.length) await db.batch(stmts);
+    // D1 caps a batch at 100 statements — chunk so a large PO never crashes.
+    for (let i = 0; i < stmts.length; i += 100) {
+      await db.batch(stmts.slice(i, i + 100));
+    }
     await db.prepare(`UPDATE purchase_orders SET updated_at = ? WHERE id = ?`).bind(ts, poId).run();
     return json({ ok: true });
   }
@@ -149,7 +152,9 @@ export default function PODetail() {
       title={po.po_number}
       backAction={{ content: t("common.back"), url: "/app/purchase-orders" }}
       primaryAction={
-        status === POStatus.Draft || status === POStatus.Sent || status === POStatus.Partial ? (
+        // Draft POs must be marked sent first (the receive action rejects
+        // drafts); showing 收货 on a draft was a dead-end (silent 400).
+        status === POStatus.Sent || status === POStatus.Partial ? (
           <Button variant="primary" onClick={() => navigate(`/app/purchase-orders/${po.id}/receive`)}>
             {t("po.receive")}
           </Button>

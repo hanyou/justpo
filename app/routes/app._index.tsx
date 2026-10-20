@@ -26,10 +26,12 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   const shopify = getShopify(env);
   const { session, admin } = await shopify.authenticate.admin(request);
 
-  const recent = await listPurchaseOrders(db, session.shop);
+  // Only the 5 most-recent POs are shown — push the limit into SQL instead of
+  // loading every row and slicing in JS (a shop with many POs stayed slow).
+  const recent = await listPurchaseOrders(db, session.shop, { limit: 5 });
   const alerts = await checkLowStock(admin as any, db, session.shop);
 
-  return json({ recent: recent.slice(0, 5), alerts });
+  return json({ recent, alerts });
 }
 
 export default function Dashboard() {

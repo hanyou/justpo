@@ -43,6 +43,11 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
 
   // Add an unknown-SKU line to the PO (PRD §6.5).
   if (intent === "add-line") {
+    // Only an open receipt can gain lines; the UI hides this on draft/received/
+    // cancelled, but guard the endpoint too so a crafted post can't mutate them.
+    if (!([POStatus.Sent, POStatus.Partial] as POStatus[]).includes(po.status as POStatus)) {
+      return json({ error: `Cannot add a line to a ${po.status} PO`, writebackFailed: 0 }, { status: 400 });
+    }
     const sku = String(form.get("sku") ?? "").trim();
     const qty = Math.max(1, Math.floor(Number(form.get("qty") ?? 1)));
     if (!sku) return json({ error: "SKU required" }, { status: 400 });
@@ -243,6 +248,9 @@ export default function Receive() {
       }
     >
       <BlockStack gap="400">
+        {actionData && "error" in actionData && actionData.error && (
+          <Banner tone="critical">{String(actionData.error)}</Banner>
+        )}
         {actionData && "ok" in actionData && (actionData.writebackFailed ?? 0) > 0 && (
           <Banner tone="warning">
             {t("receive.writebackFailed")}{" "}

@@ -8,7 +8,7 @@
 import type { Env } from "../../env";
 import { getShopify } from "../shopify.server";
 import { checkLowStock, getShopContact } from "./low-stock.server";
-import { sendEmail } from "./email.server";
+import { sendEmail, escapeHtml } from "./email.server";
 
 function localHour(ianaTimezone: string | null, now: Date): number | null {
   if (!ianaTimezone) return null;
@@ -90,7 +90,9 @@ async function candidatesDueNow(db: D1Database, now: Date): Promise<ShopCandidat
   }
 
   const CHUNK = 90; // keep bound params per statement well under D1's limit
-  const out: ShopCandidate[] = [];
+  // Keyed by shop id: the `timezone IS NULL OR timezone IN (...)` predicate
+  // repeats NULL-tz shops in every chunk, so a Map dedupes them.
+  const byId = new Map<string, ShopCandidate>();
   for (let i = 0; i < due.length; i += CHUNK) {
     const chunk = due.slice(i, i + CHUNK);
     const placeholders = chunk.map(() => "?").join(", ");
@@ -103,9 +105,9 @@ async function candidatesDueNow(db: D1Database, now: Date): Promise<ShopCandidat
       )
       .bind(...chunk)
       .all<ShopCandidate>();
-    out.push(...(results ?? []));
+    for (const r of results ?? []) byId.set(r.id, r);
   }
-  return out;
+  return [...byId.values()];
 }
 
 /** Per-shop digest — mirrors the previous inline loop body, behaviour unchanged. */
@@ -162,7 +164,7 @@ async function processShop(
     }
 
     const lines = alerts
-      .map((a) => `<li>${a.title} — on hand ${a.onHand} (threshold ${a.threshold})</li>`)
+      .map((a) => `<li>${escapeHtml(a.title)} — on hand ${a.onHand} (threshold ${a.threshold})</li>`)
       .join("");
     await sendEmail(env, {
       to: contact.email,

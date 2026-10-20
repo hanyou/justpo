@@ -41,19 +41,22 @@ export function countsTowardQuota(status: POStatus): boolean {
 
 /**
  * Derive the receiving status from line quantities.
- * - all lines fully received  → received
- * - some received             → partial
- * - none received             → keep current (sent)
+ * - every line fully received → received
+ * - some received but not all  → partial
+ * - nothing received           → keep current (null)
+ *
+ * Per-line (NOT total) on purpose: summing across lines lets one over-received
+ * line mask another line's shortfall (A ordered 10 / got 5 + B ordered 5 / got
+ * 10 → 15==15 would wrongly close the PO while A is still 5 short).
  */
 export function deriveReceivingStatus(
   lines: Array<{ qty: number; qty_received: number }>
 ): "partial" | "received" | null {
   if (lines.length === 0) return null;
-  const totalOrdered = lines.reduce((s, l) => s + l.qty, 0);
   const totalReceived = lines.reduce((s, l) => s + l.qty_received, 0);
   if (totalReceived <= 0) return null;
-  if (totalReceived >= totalOrdered) return POStatus.Received;
-  return POStatus.Partial;
+  const allComplete = lines.every((l) => l.qty_received >= l.qty);
+  return allComplete ? POStatus.Received : POStatus.Partial;
 }
 
 /** Manual adjustment: allowed on received POs (PRD §5) — adjust received qty per line. */

@@ -1,4 +1,4 @@
-import { Form, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+import { Form, useActionData, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/cloudflare";
 import { json, redirect } from "@remix-run/cloudflare";
 import {
@@ -11,7 +11,7 @@ import type { Supplier } from "../db.server";
 import { getShopify } from "../shopify.server";
 import { searchProducts, listProducts } from "../lib/catalog.server";
 import type { VariantOption } from "../lib/catalog.server";
-import { canCreatePO } from "../lib/billing.server";
+import { getBillingState } from "../lib/billing.server";
 import { interpolate, useT } from "../components/i18n";
 
 interface DraftLine {
@@ -34,7 +34,8 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
     .bind(session.shop)
     .all<Supplier>();
   const shop = await ensureShop(db, session.shop);
-  const allowed = await canCreatePO(db, shop);
+  const billing = await getBillingState(db, shop);
+  const allowed = billing.quotaLimit === null || billing.quotaUsed < billing.quotaLimit;
 
   // Product search for the useFetcher (GET ?q=...). Empty query → skip the
   // Shopify call (a bare "*" is not a valid products query operator).
@@ -46,7 +47,14 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   // Browse picker (GET ?browse=1): first 50 products, fetched once per modal open.
   const products = params.get("browse") === "1" ? await listProducts(admin as any) : null;
 
-  return json({ suppliers: suppliers ?? [], allowed, search, products });
+  return json({
+    suppliers: suppliers ?? [],
+    allowed,
+    quotaUsed: billing.quotaUsed,
+    quotaLimit: billing.quotaLimit,
+    search,
+    products,
+  });
 }
 
 export async function action({ request, context }: ActionFunctionArgs) {
@@ -56,6 +64,18 @@ export async function action({ request, context }: ActionFunctionArgs) {
   const { session } = await shopify.authenticate.admin(request);
 
   const form = await request.formData();
+  const supplierId = String(form.get("supplier_id") ?? "") || null;
+  // Only accept a supplier that belongs to THIS shop — the Select lists just the
+  // merchant's own, but a crafted post must not be able to reference another
+  // tenant's supplier_id (FK alone doesn't stop cross-shop ids).
+  if (supplierId) {
+    const own = await db
+      .prepare(`SELECT 1 AS ok FROM suppliers WHERE id = ? AND shop_id = ?`)
+      .bind(supplierId, session.shop)
+      .first();
+    if (!own) return json({ error: "Unknown supplier" }, { status: 400 });
+  }
+
   const rawLines = JSON.parse(String(form.get("lines") ?? "[]")) as Array<{
     variant_id?: string | null; sku: string; title?: string; qty: number; cost?: number | null;
   }>;
@@ -65,7 +85,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
   }
 
   const po = await createPurchaseOrder(db, session.shop, {
-    supplier_id: String(form.get("supplier_id") ?? "") || null,
+    supplier_id: supplierId,
     lines: lines.map((l) => ({
       variant_id: l.variant_id ?? null,
       sku: l.sku.trim(),
@@ -79,7 +99,9 @@ export async function action({ request, context }: ActionFunctionArgs) {
 
 export default function NewPO() {
   const t = useT();
-  const { suppliers, allowed, search: initialSearch } = useLoaderData<typeof loader>();
+  const { suppliers, allowed, quotaUsed, quotaLimit, search: initialSearch } =
+    useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const nav = useNavigation();
   const searcher = useFetcher<typeof loader>();
   const browseFetcher = useFetcher<typeof loader>();
@@ -176,7 +198,7 @@ export default function NewPO() {
       sku: l.sku,
       title: l.title || null,
       qty: parseInt(l.qty, 10) || 0,
-      cost: l.cost === "" ? null : parseFloat(l.cost),
+      cost: Number.isFinite(parseFloat(l.cost)) ? parseFloat(l.cost) : null,
     }));
     if (!payload.some((l) => l.sku.trim() && l.qty > 0)) {
       e.preventDefault();
@@ -195,7 +217,10 @@ export default function NewPO() {
       <BlockStack gap="400">
         {!allowed && (
           <Banner tone="warning">
-            {interpolate(t("dashboard.quotaWarning"), { used: "", limit: "" })}
+            {interpolate(t("dashboard.quotaWarning"), {
+              used: String(quotaUsed),
+              limit: quotaLimit === null ? "" : String(quotaLimit),
+            })}
           </Banner>
         )}
         <Card>
@@ -214,6 +239,9 @@ export default function NewPO() {
 
               <Text as="h2" variant="headingMd">{t("po.lines")}</Text>
               {error && <Banner tone="critical">{error}</Banner>}
+              {actionData && "error" in actionData && actionData.error && (
+                <Banner tone="critical">{String(actionData.error)}</Banner>
+              )}
 
               <InlineStack gap="200" blockAlign="end">
                 <div style={{ flex: 1 }}>
