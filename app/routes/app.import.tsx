@@ -2,7 +2,7 @@ import { useActionData, useNavigation, useSubmit } from "@remix-run/react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/cloudflare";
 import { json } from "@remix-run/cloudflare";
 import {
-  Page, Card, Text, Button, BlockStack, Banner, Select, DataTable, RadioButton,
+  Page, Card, Text, Button, BlockStack, InlineStack, Banner, Select, DataTable, RadioButton,
 } from "@shopify/polaris";
 import { useState } from "react";
 import { getDb, getEnv } from "../db.server";
@@ -32,6 +32,33 @@ const PO_FIELDS = [
   { key: "qty", label: "Qty", aliases: ["qty", "quantity", "ordered"] },
   { key: "cost", label: "Unit cost", aliases: ["cost", "price"] },
 ];
+
+// Downloadable CSV templates. Headers use the exact field keys so guessMapping
+// auto-matches every column on re-upload. PO rows demo one supplier spanning
+// multiple line items (→ merged into a single draft PO per supplier).
+const SUPPLIER_TEMPLATE: string[][] = [
+  ["name", "contact", "email", "currency", "payment_terms", "notes"],
+  ["Acme Trading Co.", "John Li", "john@acme.example", "USD", "Net 30", "Main packaging supplier"],
+  ["Shenzhen Bright Ltd.", "Wei Zhang", "wei@bright.example", "CNY", "Prepay 50%", "Ships in 7 days"],
+];
+
+const PO_TEMPLATE: string[][] = [
+  ["supplier_name", "sku", "qty", "cost"],
+  ["Acme Trading Co.", "SKU-1001", "50", "3.20"],
+  ["Acme Trading Co.", "SKU-1002", "20", "5.10"],
+  ["Shenzhen Bright Ltd.", "SKU-2001", "100", "1.85"],
+];
+
+// RFC-4180 quote only when the value contains a comma / quote / newline.
+function csvEscape(value: string): string {
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function buildTemplate(kind: "suppliers" | "purchase_orders"): string {
+  const rows = kind === "suppliers" ? SUPPLIER_TEMPLATE : PO_TEMPLATE;
+  // Leading UTF-8 BOM so Excel opens CJK without mojibake; CRLF line endings.
+  return "\uFEFF" + rows.map((r) => r.map(csvEscape).join(",")).join("\r\n");
+}
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
   const env = getEnv(context);
@@ -167,6 +194,22 @@ export default function Import() {
 
   const fields = type === "suppliers" ? SUPPLIER_FIELDS : PO_FIELDS;
 
+  const downloadTemplate = () => {
+    // Pure client-side: build CSV text → Blob → throwaway <a download>.
+    const blob = new Blob([buildTemplate(type)], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download =
+      type === "suppliers"
+        ? "justpo-suppliers-template.csv"
+        : "justpo-purchase-orders-template.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const onFile = async (file: File | undefined) => {
     setFileError(null);
     if (!file) return;
@@ -203,22 +246,26 @@ export default function Import() {
             <BlockStack gap="300">
               <Text as="p" variant="bodyMd">{t("import.step1")}</Text>
               {fileError && <Banner tone="critical">{fileError}</Banner>}
-              <BlockStack gap="200">
-                <RadioButton
-                  label="Suppliers"
-                  checked={type === "suppliers"}
-                  id="type-suppliers"
-                  name="type"
-                  onChange={() => setType("suppliers")}
-                />
-                <RadioButton
-                  label="Purchase orders"
-                  checked={type === "purchase_orders"}
-                  id="type-pos"
-                  name="type"
-                  onChange={() => setType("purchase_orders")}
-                />
-              </BlockStack>
+              <InlineStack gap="400" blockAlign="center" wrap>
+                <BlockStack gap="200">
+                  <RadioButton
+                    label="Suppliers"
+                    checked={type === "suppliers"}
+                    id="type-suppliers"
+                    name="type"
+                    onChange={() => setType("suppliers")}
+                  />
+                  <RadioButton
+                    label="Purchase orders"
+                    checked={type === "purchase_orders"}
+                    id="type-pos"
+                    name="type"
+                    onChange={() => setType("purchase_orders")}
+                  />
+                </BlockStack>
+                <Button onClick={downloadTemplate}>{t("import.downloadTemplate")}</Button>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">{t("import.templateHint")}</Text>
               <input
                 type="file"
                 accept=".csv,text/csv"

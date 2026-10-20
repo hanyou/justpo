@@ -70,14 +70,21 @@ export async function action({ request, context }: ActionFunctionArgs) {
   }
 
   if (intent === "add-thresholds") {
-    // Batch add from the browse modal: threshold defaults to 5 (matching the
-    // per-row default); sku is carried along so the list rows render readably.
+    // Batch add from the browse modal: threshold comes from the modal input;
+    // sku is carried along so the list rows render readably.
     const variantIds = JSON.parse(String(form.get("variant_ids") ?? "[]")) as string[];
     const skus = JSON.parse(String(form.get("skus") ?? "{}")) as Record<string, string | null>;
     if (!Array.isArray(variantIds) || variantIds.length === 0) {
       return json({ error: "no variants" }, { status: 400 });
     }
-    const DEFAULT_THRESHOLD = 5;
+    // Missing/blank/invalid falls back to 5; otherwise clamp like the single
+    // add-threshold path (integer >= 0).
+    const rawThreshold = form.get("threshold");
+    const parsedThreshold = Number(rawThreshold);
+    const threshold =
+      rawThreshold == null || String(rawThreshold).trim() === "" || !Number.isFinite(parsedThreshold)
+        ? 5
+        : Math.max(0, Math.floor(parsedThreshold));
     const stmts = variantIds.map((variantId) =>
       db
         .prepare(
@@ -85,7 +92,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
            VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(shop_id, variant_id) DO UPDATE SET threshold = excluded.threshold, sku = excluded.sku`
         )
-        .bind(uid(), session.shop, variantId, skus[variantId] ?? null, DEFAULT_THRESHOLD)
+        .bind(uid(), session.shop, variantId, skus[variantId] ?? null, threshold)
     );
     // D1 batch limit is 100 — chunk.
     for (let i = 0; i < stmts.length; i += 100) {
@@ -142,6 +149,7 @@ export default function Settings() {
   const [browseOpen, setBrowseOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [batchThreshold, setBatchThreshold] = useState("5");
 
   const browseProducts: VariantOption[] = browseFetcher.data?.products ?? [];
   const isBrowsing = browseFetcher.state !== "idle" && browseFetcher.data?.products == null;
@@ -154,9 +162,10 @@ export default function Settings() {
   }, [browseProducts, filter]);
 
   const openBrowse = () => {
-    // Always start fresh: drop any selection/filter from a previous open.
+    // Always start fresh: drop any selection/filter/threshold from a previous open.
     setSelectedIds([]);
     setFilter("");
+    setBatchThreshold("5");
     setBrowseOpen(true);
     if (!browseFetcher.data?.products) {
       browseFetcher.submit({ browse: "1" }, { method: "get" });
@@ -172,6 +181,7 @@ export default function Settings() {
       const payload = new FormData();
       payload.set("intent", "add-thresholds");
       payload.set("variant_ids", JSON.stringify(chosen.map((v) => v.id)));
+      payload.set("threshold", batchThreshold);
       payload.set(
         "skus",
         JSON.stringify(Object.fromEntries(chosen.map((v) => [v.id, v.sku ?? null])))
@@ -255,18 +265,34 @@ export default function Settings() {
               items={thresholds}
               renderItem={(th: Threshold) => (
                 <ResourceItem id={th.variant_id} onClick={() => {}}>
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="span" variant="bodyMd">
-                      {th.sku ?? th.variant_id}{" "}
-                      <Text as="span" tone="subdued">
-                        · {t("settings.threshold")}: {th.threshold}
-                      </Text>
-                    </Text>
-                    <Form method="post">
-                      <input type="hidden" name="intent" value="delete-threshold" />
-                      <input type="hidden" name="variant_id" value={th.variant_id} />
-                      <Button submit size="slim" tone="critical" variant="plain">✕</Button>
-                    </Form>
+                  <InlineStack align="space-between" blockAlign="center" gap="200">
+                    <Text as="span" variant="bodyMd">{th.sku ?? th.variant_id}</Text>
+                    <InlineStack gap="100" blockAlign="center">
+                      <Form method="post">
+                        <input type="hidden" name="intent" value="add-threshold" />
+                        <input type="hidden" name="variant_id" value={th.variant_id} />
+                        <input type="hidden" name="sku" value={th.sku ?? ""} />
+                        <InlineStack gap="100" blockAlign="center">
+                          <div style={{ width: 90 }}>
+                            <TextField
+                              label="" labelHidden
+                              type="number"
+                              name="threshold"
+                              min={0}
+                              value={thresholdInput[th.variant_id] ?? String(th.threshold)}
+                              onChange={(val) => setThresholdInput((m) => ({ ...m, [th.variant_id]: val }))}
+                              autoComplete="off"
+                            />
+                          </div>
+                          <Button submit size="slim">{t("common.save")}</Button>
+                        </InlineStack>
+                      </Form>
+                      <Form method="post">
+                        <input type="hidden" name="intent" value="delete-threshold" />
+                        <input type="hidden" name="variant_id" value={th.variant_id} />
+                        <Button submit size="slim" tone="critical" variant="plain">✕</Button>
+                      </Form>
+                    </InlineStack>
                   </InlineStack>
                 </ResourceItem>
               )}
@@ -298,6 +324,14 @@ export default function Settings() {
                 onChange={setFilter}
                 autoComplete="off"
                 placeholder={t("po.filterProducts")}
+              />
+              <TextField
+                label={t("settings.threshold")}
+                type="number"
+                min={0}
+                value={batchThreshold}
+                onChange={setBatchThreshold}
+                autoComplete="off"
               />
               {filteredProducts.length === 0 && !isBrowsing ? (
                 <Text as="span" tone="subdued">{t("po.noProducts")}</Text>
