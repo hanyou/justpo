@@ -10,7 +10,7 @@ import { ensureShop, getDb, getEnv, getPurchaseOrder } from "../db.server";
 import { getShopify } from "../shopify.server";
 import { renderPOPdf } from "../lib/pdf.server";
 import { sendPOEmail, escapeHtml } from "../lib/email.server";
-import { canCreatePO } from "../lib/billing.server";
+import { canCreatePO, getBillingState } from "../lib/billing.server";
 import { POStatus, canTransition, countsTowardQuota } from "../lib/po-state";
 import { interpolate, useT } from "../components/i18n";
 
@@ -47,7 +47,8 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
     if (!countsTowardQuota(po.status as POStatus) && countsTowardQuota(to)) {
       const shop = await ensureShop(db, session.shop);
       if (!(await canCreatePO(db, shop))) {
-        return json({ error: "quota_exceeded" }, { status: 402 });
+        const billing = await getBillingState(db, shop);
+        return json({ error: "quota_exceeded", quotaUsed: billing.quotaUsed, quotaLimit: billing.quotaLimit }, { status: 402 });
       }
     }
     // Only a transition INTO a quota-counting status starts the clock and
@@ -144,7 +145,7 @@ export default function PODetail() {
     String(l.qty),
     String(l.qty_received),
     l.cost != null ? l.cost.toFixed(2) : "—",
-    l.writeback_status === "success" ? "✓" : l.writeback_status === "failed" ? "✗ failed" : l.writeback_status,
+    l.writeback_status === "success" ? "✓" : l.writeback_status === "failed" ? `✗ ${t("receive.wbFailed")}` : t("receive.wbPending"),
   ]);
 
   return (
@@ -172,7 +173,10 @@ export default function PODetail() {
         )}
         {actionData && "error" in actionData && actionData.error === "quota_exceeded" && (
           <Banner tone="warning">
-            {interpolate(t("dashboard.quotaWarning"), { used: "", limit: "" })}{" "}
+            {interpolate(t("dashboard.quotaWarning"), {
+              used: String((actionData as Record<string, unknown>).quotaUsed ?? ""),
+              limit: (actionData as Record<string, unknown>).quotaLimit == null ? "" : String((actionData as Record<string, unknown>).quotaLimit)
+            })}{" "}
             <Link to="/app/billing">{t("nav.billing")}</Link>
           </Banner>
         )}
@@ -217,7 +221,7 @@ export default function PODetail() {
           <div style={{ marginTop: 12 }}>
             <DataTable
               columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "text"]}
-              headings={[t("po.sku"), "Title", t("po.qty"), t("po.received"), t("po.cost"), "Writeback"]}
+              headings={[t("po.sku"), t("po.colTitle"), t("po.qty"), t("po.received"), t("po.cost"), t("receive.colSync")]}
               rows={rows}
             />
           </div>
@@ -255,7 +259,7 @@ export default function PODetail() {
             {po.lines.map((l) => (
               <TextField
                 key={l.id}
-                label={`${l.sku} (ordered ${l.qty})`}
+                label={`${l.sku} (${interpolate(t("receive.ordered"), { n: l.qty })})`}
                 type="number"
                 value={adjustments[l.id] ?? String(l.qty_received)}
                 onChange={(v) => setAdjustments((a) => ({ ...a, [l.id]: v }))}

@@ -99,10 +99,12 @@ export async function action({ request, context }: ActionFunctionArgs) {
 
     const stmts = [];
     let count = 0;
+    let skipped = 0;
     for (const row of payload.rows) {
       const name = cell(row, "name");
-      if (!name || existingNames.has(name.toLowerCase())) continue;
-      existingNames.add(name.toLowerCase()); // dedup within same CSV too
+      if (!name) continue;
+      if (existingNames.has(name.toLowerCase())) { skipped++; continue; }
+      existingNames.add(name.toLowerCase());
       stmts.push(
         db
           .prepare(
@@ -126,7 +128,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
     for (let i = 0; i < stmts.length; i += 100) {
       await db.batch(stmts.slice(i, i + 100));
     }
-    return json({ ok: true, suppliers: count, pos: 0 });
+    return json({ ok: true, suppliers: count, skipped, pos: 0 });
   }
 
   // purchase_orders: group rows by supplier name → one draft PO per supplier.
@@ -183,7 +185,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
     }
     poCount++;
   }
-  return json({ ok: true, suppliers: 0, pos: poCount });
+  return json({ ok: true, suppliers: 0, skipped: 0, pos: poCount });
 }
 
 type Step = "upload" | "map" | "preview" | "done";
@@ -336,6 +338,11 @@ export default function Import() {
                 pos: actionData.pos ?? 0,
               })}
             </Banner>
+            {(actionData.skipped ?? 0) > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <Text as="span" tone="subdued">{interpolate(t("import.skipped"), { n: actionData.skipped })}</Text>
+              </div>
+            )}
             <div style={{ marginTop: 12 }}>
               <Button onClick={() => { setStep("upload"); setHeaders([]); setRows([]); }}>
                 {t("import.upload")}
