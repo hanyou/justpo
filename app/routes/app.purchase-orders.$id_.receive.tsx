@@ -5,7 +5,7 @@ import {
   Page, Card, Text, Button, InlineStack, BlockStack, Banner,
   DataTable, TextField, Modal,
 } from "@shopify/polaris";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { getDb, getEnv, getPurchaseOrder } from "../db.server";
 import { getShopify } from "../shopify.server";
 import { ScannerModal } from "../components/ScannerModal";
@@ -170,6 +170,18 @@ export default function Receive() {
   const [received, setReceived] = useState<Record<string, string>>(
     Object.fromEntries(po.lines.map((l) => [l.id, String(l.qty_received)]))
   );
+  // When po.lines revalidate (e.g., after add-line), fill in new line IDs that
+  // aren't in our local state yet (useState only runs on mount).
+  useEffect(() => {
+    setReceived((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const l of po.lines) {
+        if (!(l.id in next)) { next[l.id] = String(l.qty_received); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [po.lines]);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [unknownSku, setUnknownSku] = useState<string | null>(null);
 
@@ -209,7 +221,7 @@ export default function Receive() {
     const diff = lineDiff({ qty: l.qty, qty_received: parseInt(received[l.id] ?? "0", 10) || 0 });
     return [
       l.sku,
-      `ordered ${l.qty}`,
+      interpolate(t("receive.ordered"), { n: l.qty }),
       <TextField
         key={l.id}
         label="" labelHidden
@@ -226,11 +238,11 @@ export default function Receive() {
         "—"
       ),
       l.writeback_status === "failed" ? (
-        <Text as="span" tone="critical">failed</Text>
+        <Text as="span" tone="critical">{t("receive.wbFailed")}</Text>
       ) : l.writeback_status === "success" ? (
         "✓"
       ) : (
-        l.writeback_status
+        t("receive.wbPending")
       ),
     ];
   });
@@ -243,7 +255,7 @@ export default function Receive() {
       backAction={{ content: t("common.back"), url: `/app/purchase-orders/${po.id}` }}
       primaryAction={
         <Button variant="primary" onClick={() => setScannerOpen(true)}>
-          📷 Scan
+          {t("receive.scanBtn")}
         </Button>
       }
     >
@@ -251,14 +263,8 @@ export default function Receive() {
         {actionData && "error" in actionData && actionData.error && (
           <Banner tone="critical">{String(actionData.error)}</Banner>
         )}
-        {actionData && "ok" in actionData && (actionData.writebackFailed ?? 0) > 0 && (
-          <Banner tone="warning">
-            {t("receive.writebackFailed")}{" "}
-            <Button variant="plain" onClick={retryFailed}>{t("po.retryWriteback")}</Button>
-          </Banner>
-        )}
         {failedCount > 0 && (
-          <Banner tone="critical">
+          <Banner tone="warning">
             {t("receive.writebackFailed")}{" "}
             <Button variant="plain" onClick={retryFailed}>{t("po.retryWriteback")}</Button>
           </Banner>
@@ -267,7 +273,7 @@ export default function Receive() {
         <Card>
           <DataTable
             columnContentTypes={["text", "text", "numeric", "text", "text"]}
-            headings={[t("po.sku"), t("po.qty"), t("po.received"), "Diff", "Writeback"]}
+            headings={[t("po.sku"), t("po.qty"), t("po.received"), t("receive.colDiff"), t("receive.colSync")]}
             rows={rows}
           />
           <div style={{ marginTop: 16 }}>

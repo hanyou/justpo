@@ -90,11 +90,19 @@ export async function action({ request, context }: ActionFunctionArgs) {
   };
 
   if (payload.type === "suppliers") {
+    // Idempotent import: skip suppliers whose name already exists for this shop.
+    const { results: existingRows } = await db
+      .prepare(`SELECT name FROM suppliers WHERE shop_id = ?`)
+      .bind(session.shop)
+      .all<{ name: string }>();
+    const existingNames = new Set((existingRows ?? []).map((r) => r.name.toLowerCase()));
+
     const stmts = [];
     let count = 0;
     for (const row of payload.rows) {
       const name = cell(row, "name");
-      if (!name) continue;
+      if (!name || existingNames.has(name.toLowerCase())) continue;
+      existingNames.add(name.toLowerCase()); // dedup within same CSV too
       stmts.push(
         db
           .prepare(

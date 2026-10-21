@@ -123,11 +123,11 @@ export function ScannerModal({
             }}
           >
             <TextField
-              label="Barcode"
+              label={t("receive.barcodeLabel")}
               value={manual}
               onChange={setManual}
               autoComplete="off"
-              placeholder="Scan or type, then Enter"
+              placeholder={t("receive.scanPlaceholder")}
               connectedRight={
                 <Button submit size="slim">
                   +

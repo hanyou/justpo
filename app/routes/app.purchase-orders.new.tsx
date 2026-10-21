@@ -150,17 +150,29 @@ export default function NewPO() {
   const addSelected = () => {
     const chosen = browseProducts.filter((v) => selectedIds.includes(v.id));
     if (chosen.length) {
-      setLines((ls) => [
-        ...ls,
-        ...chosen.map((v) => ({
-          key: `${v.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          variant_id: v.id,
-          sku: v.sku ?? "",
-          title: v.productTitle + (v.title !== "Default Title" ? ` — ${v.title}` : ""),
-          qty: "1",
-          cost: "",
-        })),
-      ]);
+      setLines((ls) => {
+        let next = [...ls];
+        for (const v of chosen) {
+          const existing = next.find((l) => l.variant_id === v.id);
+          if (existing) {
+            next = next.map((l) =>
+              l.variant_id === v.id
+                ? { ...l, qty: String((parseInt(l.qty, 10) || 0) + 1) }
+                : l
+            );
+          } else {
+            next.push({
+              key: `${v.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              variant_id: v.id,
+              sku: v.sku ?? "",
+              title: v.productTitle + (v.title !== "Default Title" ? ` — ${v.title}` : ""),
+              qty: "1",
+              cost: "",
+            });
+          }
+        }
+        return next;
+      });
     }
     setSelectedIds([]);
     setFilter("");
@@ -168,17 +180,27 @@ export default function NewPO() {
   };
 
   const addLine = (v: VariantOption) => {
-    setLines((ls) => [
-      ...ls,
-      {
-        key: `${v.id}-${Date.now()}`,
-        variant_id: v.id,
-        sku: v.sku ?? "",
-        title: v.productTitle + (v.title !== "Default Title" ? ` — ${v.title}` : ""),
-        qty: "1",
-        cost: "",
-      },
-    ]);
+    setLines((ls) => {
+      const existing = ls.find((l) => l.variant_id === v.id);
+      if (existing) {
+        return ls.map((l) =>
+          l.variant_id === v.id
+            ? { ...l, qty: String((parseInt(l.qty, 10) || 0) + 1) }
+            : l
+        );
+      }
+      return [
+        ...ls,
+        {
+          key: `${v.id}-${Date.now()}`,
+          variant_id: v.id,
+          sku: v.sku ?? "",
+          title: v.productTitle + (v.title !== "Default Title" ? ` — ${v.title}` : ""),
+          qty: "1",
+          cost: "",
+        },
+      ];
+    });
     setQuery("");
   };
 
