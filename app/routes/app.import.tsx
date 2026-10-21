@@ -128,7 +128,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
     for (let i = 0; i < stmts.length; i += 100) {
       await db.batch(stmts.slice(i, i + 100));
     }
-    return json({ ok: true, suppliers: count, skipped, pos: 0 });
+    return json({ ok: true, suppliers: count, skipped, pos: 0, poSkipped: 0 });
   }
 
   // purchase_orders: group rows by supplier name → one draft PO per supplier.
@@ -140,7 +140,25 @@ export async function action({ request, context }: ActionFunctionArgs) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(row);
   }
+
+  // Idempotent PO import: build signatures of existing draft POs
+  // (supplier_id + sorted SKU set). If same combo exists, skip.
+  const { results: draftPoRows } = await db
+    .prepare(`SELECT id, supplier_id FROM purchase_orders WHERE shop_id = ? AND status = 'draft'`)
+    .bind(session.shop)
+    .all<{ id: string; supplier_id: string | null }>();
+  const draftSignatures = new Set<string>();
+  for (const dp of draftPoRows ?? []) {
+    const { results: skus } = await db
+      .prepare(`SELECT sku FROM po_line_items WHERE po_id = ?`)
+      .bind(dp.id)
+      .all<{ sku: string }>();
+    const sig = (skus ?? []).map((l) => l.sku).sort().join(",");
+    draftSignatures.add(`${dp.supplier_id ?? "__none__"}|${sig}`);
+  }
+
   let poCount = 0;
+  let poSkipped = 0;
   for (const [supplierName, groupRows] of groups) {
     let supplierId: string | null = null;
     if (supplierName !== "__none__") {
@@ -150,6 +168,12 @@ export async function action({ request, context }: ActionFunctionArgs) {
         .first<{ id: string }>();
       supplierId = s?.id ?? null;
     }
+    // Check signature: same supplier + same sorted SKU set = duplicate.
+    const groupSkus = groupRows.map((r) => cell(r, "sku")).sort().join(",");
+    const signature = `${supplierId ?? "__none__"}|${groupSkus}`;
+    if (draftSignatures.has(signature)) { poSkipped++; continue; }
+    draftSignatures.add(signature); // handle re-import within same CSV
+
     const poNumber = await nextPoNumber(db, session.shop);
     const poId = uid();
     const stmts: D1PreparedStatement[] = [
@@ -185,7 +209,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
     }
     poCount++;
   }
-  return json({ ok: true, suppliers: 0, skipped: 0, pos: poCount });
+  return json({ ok: true, suppliers: 0, skipped: 0, pos: poCount, poSkipped });
 }
 
 type Step = "upload" | "map" | "preview" | "done";
@@ -341,6 +365,11 @@ export default function Import() {
             {(actionData.skipped ?? 0) > 0 && (
               <div style={{ marginTop: 8 }}>
                 <Text as="span" tone="subdued">{interpolate(t("import.skipped"), { n: actionData.skipped })}</Text>
+              </div>
+            )}
+            {(actionData.poSkipped ?? 0) > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <Text as="span" tone="subdued">{interpolate(t("import.poSkipped"), { n: actionData.poSkipped })}</Text>
               </div>
             )}
             <div style={{ marginTop: 12 }}>
