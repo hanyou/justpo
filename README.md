@@ -28,7 +28,7 @@ justpo/
 │   │   ├── billing.ts         # Plans, quota (Starter 30/mo), trial, upgrade/downgrade, seed lock
 │   │   ├── email.ts           # Resend; logs clearly when RESEND_API_KEY is unset
 │   │   ├── pdf.ts             # PO PDF via pdf-lib (Workers-safe, pure JS)
-│   │   ├── inventory.ts       # Inventory writeback (primary location only, per-line status)
+│   │   ├── inventory.ts       # Inventory writeback (single stocked location, per-line status)
 │   │   ├── low-stock.ts       # Threshold vs live inventoryQuantity check
 │   │   ├── catalog.ts         # Product/variant search (GraphQL)
 │   │   └── cron.ts            # Hourly job: 08:00 shop-local low-stock digest email
@@ -62,7 +62,8 @@ justpo/
 - **Email (§6.4/§6.5):** one-click PO PDF email to supplier; failure keeps PO `sent` + red banner + retry.
 - **Receiving (§6.2):** camera (ZXing) + bluetooth keyboard-wedge; unknown SKU → add-to-PO/ignore;
   per-line `writeback_status` + retry; `qty_written_back` prevents double-counting on retry.
-  P0 writes to the **primary location only** (first active location).
+  P0 writes to a **single stocked location** (deterministically the smallest
+  location id among stocked levels — Shopify has no clean primary-location field).
 - **Low stock (§6.3):** thresholds in settings; live alerts on dashboard; hourly cron emails a digest
   at 08:00 shop-local time.
 - **Webhooks (§9):** HMAC-verified via `authenticate.webhook`; GDPR topics return 200;

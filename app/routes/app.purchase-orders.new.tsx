@@ -18,6 +18,7 @@ interface DraftLine {
   key: string;
   variant_id: string | null;
   sku: string;
+  barcode: string;
   title: string;
   qty: string;
   cost: string;
@@ -77,7 +78,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
   }
 
   const rawLines = JSON.parse(String(form.get("lines") ?? "[]")) as Array<{
-    variant_id?: string | null; sku: string; title?: string; qty: number; cost?: number | null;
+    variant_id?: string | null; sku: string; barcode?: string | null; title?: string; qty: number; cost?: number | null;
   }>;
   const lines = rawLines.filter((l) => l.sku.trim() && l.qty > 0);
   if (lines.length === 0) {
@@ -89,6 +90,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
     lines: lines.map((l) => ({
       variant_id: l.variant_id ?? null,
       sku: l.sku.trim(),
+      barcode: l.barcode?.trim() || null,
       title: l.title ?? null,
       qty: Math.floor(l.qty),
       cost: l.cost ?? null,
@@ -165,6 +167,7 @@ export default function NewPO() {
               key: `${v.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
               variant_id: v.id,
               sku: v.sku ?? "",
+              barcode: v.barcode ?? "",
               title: v.productTitle + (v.title !== "Default Title" ? ` — ${v.title}` : ""),
               qty: "1",
               cost: "",
@@ -195,6 +198,7 @@ export default function NewPO() {
           key: `${v.id}-${Date.now()}`,
           variant_id: v.id,
           sku: v.sku ?? "",
+          barcode: v.barcode ?? "",
           title: v.productTitle + (v.title !== "Default Title" ? ` — ${v.title}` : ""),
           qty: "1",
           cost: "",
@@ -207,7 +211,7 @@ export default function NewPO() {
   const addManualLine = () =>
     setLines((ls) => [
       ...ls,
-      { key: `manual-${Date.now()}`, variant_id: null, sku: "", title: "", qty: "1", cost: "" },
+      { key: `manual-${Date.now()}`, variant_id: null, sku: "", barcode: "", title: "", qty: "1", cost: "" },
     ]);
 
   const updateLine = (key: string, patch: Partial<DraftLine>) =>
@@ -218,6 +222,7 @@ export default function NewPO() {
     const payload = lines.map((l) => ({
       variant_id: l.variant_id,
       sku: l.sku,
+      barcode: l.barcode || null,
       title: l.title || null,
       qty: parseInt(l.qty, 10) || 0,
       cost: Number.isFinite(parseFloat(l.cost)) ? parseFloat(l.cost) : null,

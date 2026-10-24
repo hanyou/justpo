@@ -2,10 +2,10 @@
  * PO PDF generation with pdf-lib (pure JS — bundles fine on Workers).
  *
  * Renders a simple, printable purchase order: header (PO number, date,
- * supplier), line table (SKU / title / qty / unit cost / line total),
- * totals, and notes.
+ * supplier), line table (SKU / title / qty / unit cost / line total), and
+ * totals. Internal supplier notes are intentionally excluded.
  *
- * CJK: supplier names / product titles / notes may contain Chinese, which the
+ * CJK: supplier names / product titles may contain Chinese, which the
  * built-in StandardFonts (WinAnsi-only) cannot encode — drawText would throw
  * `WinAnsi cannot encode`. We embed a pre-subsetted OFL Noto Sans SC (served as
  * a Worker static asset, see scripts/build-cjk-font.mjs) via @pdf-lib/fontkit
@@ -33,7 +33,8 @@ export interface POPdfData {
   supplierContact: string | null;
   supplierEmail: string | null;
   paymentTerms: string | null;
-  notes: string | null;
+  // NOTE: supplier `notes` are internal-only and deliberately NOT rendered —
+  // this PDF is sent to the supplier.
   lines: POPdfLine[];
   currency: string;
 }
@@ -206,18 +207,6 @@ export async function renderPOPdf(data: POPdfData, env: Env): Promise<Uint8Array
   }
   line();
   draw(`Total: ${money(total, data.currency)}`, { size: 12, f: bold });
-  y -= 20;
-
-  if (data.notes) {
-    nextPageIfNeeded();
-    draw("Notes", { size: 12, f: bold });
-    y -= 16;
-    for (const chunk of wrapText(data.notes, PAGE_W - 2 * MARGIN, 10, font)) {
-      nextPageIfNeeded();
-      draw(chunk, { size: 10 });
-      y -= 14;
-    }
-  }
 
   return pdf.save();
 }

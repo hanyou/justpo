@@ -89,7 +89,6 @@ export async function action({ request, context, params }: ActionFunctionArgs) {
       supplierContact: po.supplier.contact,
       supplierEmail: po.supplier.email,
       paymentTerms: po.supplier.payment_terms,
-      notes: po.supplier.notes,
       lines: po.lines.map((l) => ({ sku: l.sku, title: l.title, qty: l.qty, cost: l.cost })),
       currency: po.supplier.currency,
     }, env);
@@ -256,6 +255,7 @@ export default function PODetail() {
       >
         <Modal.Section>
           <BlockStack gap="200">
+            <Banner tone="info">{t("po.adjustHint")}</Banner>
             {po.lines.map((l) => (
               <TextField
                 key={l.id}

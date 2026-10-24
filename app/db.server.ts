@@ -38,6 +38,7 @@ export interface POLineItem {
   po_id: string;
   variant_id: string | null;
   sku: string;
+  barcode: string | null;
   title: string | null;
   qty: number;
   qty_received: number;
@@ -131,6 +132,7 @@ export async function createPurchaseOrder(
     lines: Array<{
       variant_id?: string | null;
       sku: string;
+      barcode?: string | null;
       title?: string | null;
       qty: number;
       cost?: number | null;
@@ -154,14 +156,15 @@ export async function createPurchaseOrder(
       db
         .prepare(
           `INSERT INTO po_line_items
-             (id, po_id, variant_id, sku, title, qty, qty_received, qty_written_back, cost, writeback_status)
-           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 'pending')`
+             (id, po_id, variant_id, sku, barcode, title, qty, qty_received, qty_written_back, cost, writeback_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'pending')`
         )
         .bind(
           uid(),
           id,
           line.variant_id ?? null,
           line.sku,
+          line.barcode ?? null,
           line.title ?? null,
           line.qty,
           line.cost ?? null

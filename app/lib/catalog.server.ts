@@ -7,6 +7,7 @@ import type { GraphqlClient } from "./low-stock.server";
 export interface VariantOption {
   id: string;
   sku: string | null;
+  barcode: string | null;
   title: string;
   inventoryQuantity: number | null;
   productTitle: string;
@@ -24,7 +25,7 @@ export async function searchProducts(
             title
             variants(first: 15) {
               edges {
-                node { id sku title inventoryQuantity }
+                node { id sku barcode title inventoryQuantity }
               }
             }
           }
@@ -41,6 +42,7 @@ export async function searchProducts(
       out.push({
         id: v?.node?.id ?? "",
         sku: v?.node?.sku ?? null,
+        barcode: v?.node?.barcode ?? null,
         title: v?.node?.title ?? "",
         inventoryQuantity: v?.node?.inventoryQuantity ?? null,
         productTitle,
@@ -63,7 +65,7 @@ export async function listProducts(admin: GraphqlClient): Promise<VariantOption[
             title
             variants(first: 20) {
               edges {
-                node { id sku title }
+                node { id sku barcode title }
               }
             }
           }
@@ -79,6 +81,7 @@ export async function listProducts(admin: GraphqlClient): Promise<VariantOption[
       out.push({
         id: v?.node?.id ?? "",
         sku: v?.node?.sku ?? null,
+        barcode: v?.node?.barcode ?? null,
         title: v?.node?.title ?? "",
         inventoryQuantity: null,
         productTitle,

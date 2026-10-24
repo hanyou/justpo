@@ -66,7 +66,7 @@ export default function TermsOfService() {
 
       <H>3. Known limitations (P0)</H>
       <ul>
-        <Li>Receiving writes back to your store&apos;s <strong>primary location</strong> only. Multi-location receiving is not supported yet.</Li>
+        <Li>Receiving writes back to a <strong>single stocked location</strong> (chosen deterministically per item). Multi-location allocation is not supported yet.</Li>
         <Li>Costs are recorded in your store&apos;s <strong>home currency</strong> only. Multi-currency conversion is not supported yet.</Li>
         <Li>JustPO intentionally does <strong>not</strong> offer demand forecasting, COGS/landed-cost writeback, multi-warehouse management, or AI features.</Li>
       </ul>
@@ -117,7 +117,7 @@ export default function TermsOfService() {
 
       <H>3. 已知限制（当前版本）</H>
       <ul>
-        <Li>收货仅回写到店铺<strong>主仓库</strong>，暂不支持多仓库收货。</Li>
+        <Li>收货仅回写到<strong>单个有货仓库</strong>（按商品确定性地选定），暂不支持多仓库分配。</Li>
         <Li>成本仅按店铺<strong>本位币</strong>记录，暂不支持多币种换算。</Li>
         <Li>JustPO 有意<strong>不做</strong>需求预测、COGS/到岸成本回写、多仓库管理及任何 AI 功能。</Li>
       </ul>

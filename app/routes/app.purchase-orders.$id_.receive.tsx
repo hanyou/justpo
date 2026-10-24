@@ -186,9 +186,12 @@ export default function Receive() {
   const [unknownSku, setUnknownSku] = useState<string | null>(null);
 
   const onScan = (code: string) => {
-    // Match by SKU (case-insensitive) or variant barcode.
+    // Match by SKU or the variant's UPC/EAN barcode (case-insensitive).
+    const c = code.trim().toLowerCase();
     const line = po.lines.find(
-      (l) => l.sku.toLowerCase() === code.toLowerCase()
+      (l) =>
+        l.sku.toLowerCase() === c ||
+        (!!l.barcode && l.barcode.toLowerCase() === c)
     );
     if (line) {
       setReceived((r) => ({ ...r, [line.id]: String((parseInt(r[line.id] ?? "0", 10) || 0) + 1) }));

@@ -65,7 +65,7 @@ export default function PrivacyPolicy() {
 
       <H>3. How we use your data</H>
       <ul>
-        <Li>To run the app&apos;s core functions: creating POs, emailing PDF purchase orders to your suppliers, writing received quantities back to your primary location&apos;s inventory, and sending low-stock alerts.</Li>
+        <Li>To run the app&apos;s core functions: creating POs, emailing PDF purchase orders to your suppliers, writing received quantities back to your inventory, and sending low-stock alerts.</Li>
         <Li>Supplier emails you enter are used solely to deliver the purchase orders you send.</Li>
       </ul>
 
@@ -123,7 +123,7 @@ export default function PrivacyPolicy() {
 
       <H>3. 数据用来做什么</H>
       <ul>
-        <Li>运行 App 核心功能：建 PO、把带 PDF 的采购单邮件发给你的供应商、把收货数量回写到主仓库存、发送低库存提醒。</Li>
+        <Li>运行 App 核心功能：建 PO、把带 PDF 的采购单邮件发给你的供应商、把收货数量回写到您的库存、发送低库存提醒。</Li>
         <Li>你填写的供应商邮箱仅用于投递你主动发送的采购单。</Li>
       </ul>
 

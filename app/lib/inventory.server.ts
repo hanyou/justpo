@@ -6,7 +6,10 @@
  * compare-and-swap). So before writing we read back, per inventory item, the
  * location that actually stocks it and its current available.
  *
- * P0 limitation: one write per item, at the first location that stocks it.
+ * P0 limitation: one write per item, at a single stocked location chosen
+ * deterministically (smallest location id among stocked levels) — Shopify has
+ * no clean "primary location" field, so we pin one stable warehouse per item
+ * rather than letting retries land on different locations.
  * Failures are recorded per line as writeback_status (pending|success|failed)
  * and surfaced in the UI with a manual retry button — the PO itself is never
  * blocked by a writeback failure. Both the receive and retry paths derive the
@@ -31,8 +34,9 @@ export interface LevelInfo {
 /**
  * For each inventory item, find the location that actually stocks it plus the
  * current `available` quantity (the `changeFromQuantity` Shopify needs). P0:
- * picks the first level that reports an available quantity. Batched 50 at a
- * time. Reading levels works with `write_inventory` (no `read_inventory` needed).
+ * among all stocked levels it picks the one with the smallest location id (so
+ * the choice is stable across retries). Batched 50 at a time. Reading levels
+ * works with `write_inventory` (no `read_inventory` needed).
  */
 export async function getInventoryLevels(
   admin: GraphqlClient,
@@ -58,15 +62,23 @@ export async function getInventoryLevels(
     const data = await response.json();
     for (const node of data?.data?.nodes ?? []) {
       if (!node?.id) continue;
+      // Shopify has no clean "primary location" field and level order is not
+      // guaranteed. Collect every stocked level and deterministically pick the
+      // one with the smallest location id, so the same item always writes to the
+      // same location across retries/multi-line POs (no cross-warehouse drift).
+      const candidates: LevelInfo[] = [];
       for (const e of node?.inventoryLevels?.edges ?? []) {
         const locId = e?.node?.location?.id;
         const avail = (e?.node?.quantities ?? []).find(
           (q: any) => q?.name === "available"
         )?.quantity;
         if (locId && typeof avail === "number") {
-          map.set(node.id, { locationId: locId, available: avail });
-          break;
+          candidates.push({ locationId: locId, available: avail });
         }
+      }
+      if (candidates.length) {
+        candidates.sort((a, b) => (a.locationId < b.locationId ? -1 : 1));
+        map.set(node.id, candidates[0]);
       }
     }
   }
